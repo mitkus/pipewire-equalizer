@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=pw-eq-imgui
+Comment=Parametric equalizer for PipeWire
+Exec=pw-eq-imgui
+Icon=audio-headphones
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=equalizer;eq;pipewire;audio;
+StartupWMClass=pw-eq-imgui
+Actions=hidden;
+
+[Desktop Action hidden]
+Name=Start in system tray
+Exec=pw-eq-imgui --hidden

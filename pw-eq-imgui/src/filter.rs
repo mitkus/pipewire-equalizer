@@ -91,6 +91,19 @@ impl FilterWindowState {
         self.should_sync_all = true;
     }
 
+    pub fn bypass(&self) -> bool {
+        self.bypass
+    }
+
+    /// Sets bypass and schedules a full filter sync (no-op if unchanged).
+    pub fn set_bypass(&mut self, bypass: bool) {
+        self.bypass = bypass;
+        if self.eq.bypassed != bypass {
+            self.eq.bypassed = bypass;
+            self.should_sync_all = true;
+        }
+    }
+
     pub fn need_module_load(&mut self) -> bool {
         if self.prev_bands != Some(self.eq.filters.len()) {
             self.prev_bands = Some(self.eq.filters.len());
@@ -273,14 +286,12 @@ impl FilterWindowState {
                 ui.same_line();
                 ui.separator_vertical();
                 ui.same_line();
-                right_aligned_checkbox(ui, "Bypass", &mut self.bypass);
+                let mut bypass = self.bypass;
+                right_aligned_checkbox(ui, "Bypass", &mut bypass);
                 if ui.io().key_ctrl() && ui.is_key_pressed(dear_imgui_rs::Key::B) {
-                    self.bypass = !self.bypass;
+                    bypass = !bypass;
                 }
-                if self.eq.bypassed != self.bypass {
-                    self.eq.bypassed = self.bypass;
-                    self.should_sync_all = true;
-                }
+                self.set_bypass(bypass);
                 ui.separator_horizontal();
 
                 {

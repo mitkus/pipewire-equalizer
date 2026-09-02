@@ -3,30 +3,40 @@ use std::thread::{self, JoinHandle};
 use pw_eq::{pw, tui::Notif};
 use pw_util::NodeInfo;
 use tokio::sync::mpsc;
+use winit::event_loop::EventLoopProxy;
 
-use crate::{autoeq::AutoEqWindowState, filter::FilterWindowState};
+use crate::{UserEvent, autoeq::AutoEqWindowState, filter::FilterWindowState};
 
 pub struct PipewireState {
     pub notifs_tx: mpsc::Sender<Notif>,
     pub pw_tx: pipewire::channel::Sender<pw::Message>,
     pub sample_rate: u32,
     pub active_node_id: Option<u32>,
-    notifs_rx: mpsc::Receiver<Notif>,
     pw_handle: Option<JoinHandle<anyhow::Result<()>>>,
 }
 
 impl PipewireState {
-    pub fn new(default_audio_sink: Option<NodeInfo>) -> Self {
+    /// Starts the PipeWire thread. Notifications from it (and from async tasks holding a clone
+    /// of `notifs_tx`) are forwarded to the winit event loop as [`UserEvent::Notif`], which is
+    /// what wakes the otherwise idle UI thread.
+    pub fn new(default_audio_sink: Option<NodeInfo>, proxy: EventLoopProxy<UserEvent>) -> Self {
         let (pw_tx, rx) = pipewire::channel::channel();
-        let (notifs_tx, notifs_rx) = mpsc::channel(100);
+        let (notifs_tx, mut notifs_rx) = mpsc::channel(100);
         let pw_notifs_tx = notifs_tx.clone();
         let pw_handle =
             thread::spawn(|| pw_eq::pw::pw_thread(pw_notifs_tx, rx, default_audio_sink));
 
+        tokio::spawn(async move {
+            while let Some(notif) = notifs_rx.recv().await {
+                if proxy.send_event(UserEvent::Notif(notif)).is_err() {
+                    break;
+                }
+            }
+        });
+
         Self {
             notifs_tx,
             pw_tx,
-            notifs_rx,
             sample_rate: 48000,
             active_node_id: None,
             pw_handle: Some(pw_handle),
@@ -56,63 +66,64 @@ impl PipewireState {
         });
     }
 
-    pub fn update(
+    pub fn handle_notif(
         &mut self,
+        notif: Notif,
         filter_window: &mut FilterWindowState,
         autoeq_window: &mut AutoEqWindowState,
     ) {
-        if let Ok(notif) = self.notifs_rx.try_recv() {
-            match notif {
-                Notif::AutoEqDbLoaded { entries, targets } => {
-                    autoeq_window.auto_eq_db_loaded(entries, targets);
-                }
-                Notif::AutoEqLoaded { name, response } => {
-                    autoeq_window.auto_eq_loaded(name, response);
-                }
-                Notif::PwModuleLoaded {
+        match notif {
+            Notif::AutoEqDbLoaded { entries, targets } => {
+                autoeq_window.auto_eq_db_loaded(entries, targets);
+            }
+            Notif::AutoEqLoaded { name, response } => {
+                autoeq_window.auto_eq_loaded(name, response);
+            }
+            Notif::PwModuleLoaded {
+                id,
+                name,
+                media_name,
+            } => {
+                // Find the filter's output node (capture side) by media.name
+                let Ok(node) = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(pw_eq::find_eq_node(&media_name))
+                })
+                .inspect_err(|err| {
+                    tracing::error!(error = &**err, "failed to find EQ node");
+                }) else {
+                    return;
+                };
+
+                let node_id = node.id;
+                self.active_node_id = Some(node_id);
+                tracing::info!(
+                    "Module loaded id {}, name {}, node_id {}",
                     id,
                     name,
-                    media_name,
-                } => {
-                    // Find the filter's output node (capture side) by media.name
-                    let Ok(node) = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current()
-                            .block_on(pw_eq::find_eq_node(&media_name))
-                    })
-                    .inspect_err(|err| {
-                        tracing::error!(error = &**err, "failed to find EQ node");
-                    }) else {
-                        return;
-                    };
+                    node_id
+                );
 
-                    let node_id = node.id;
-                    self.active_node_id = Some(node_id);
-                    tracing::info!(
-                        "Module loaded id {}, name {}, node_id {}",
-                        id,
-                        name,
-                        node_id
+                filter_window.apply_all_to_pipewire(node_id);
+
+                if let Err(err) = self.pw_tx.send(pw::Message::SetActiveNode(NodeInfo {
+                    node_id,
+                    node_name: media_name,
+                    object_serial: node
+                        .info
+                        .props
+                        .get("object.serial")
+                        .and_then(|v| v.as_i64())
+                        .expect("object.serial missing or malformed"),
+                })) {
+                    tracing::error!(
+                        error = ?err,
+                        "failed to set active node"
                     );
-
-                    filter_window.apply_all_to_pipewire(node_id);
-
-                    if let Err(err) = self.pw_tx.send(pw::Message::SetActiveNode(NodeInfo {
-                        node_id,
-                        node_name: media_name,
-                        object_serial: node
-                            .info
-                            .props
-                            .get("object.serial")
-                            .and_then(|v| v.as_i64())
-                            .expect("object.serial missing or malformed"),
-                    })) {
-                        tracing::error!(
-                            error = ?err,
-                            "failed to set active node"
-                        );
-                    }
                 }
-                _ => (),
+            }
+            Notif::Error(err) => {
+                tracing::error!(error = &*err, "PipeWire error");
             }
         }
     }

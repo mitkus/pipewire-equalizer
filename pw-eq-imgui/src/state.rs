@@ -11,7 +11,6 @@ pub struct ImguiState {
     pub context: Context,
     pub plot_context: PlotContext,
     pub clear_color: [f32; 4],
-    pub last_frame: std::time::Instant,
 
     pub auto_eq: AutoEqWindowState,
     pub filter: FilterWindowState,

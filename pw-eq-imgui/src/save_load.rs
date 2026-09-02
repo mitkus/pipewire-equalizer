@@ -9,7 +9,6 @@ use pw_eq::tui::{
 use dear_imgui_rs::{Condition, Key, Ui, WindowFlags};
 
 use pw_util::apo::Config;
-use tracing::instrument::WithSubscriber;
 
 const LAST_SAVED_FILE_PATH: &str = "pw-eq-imgui/last-saved";
 const DEFAULT_SAVE_PATH: &str = "pw-eq-imgui/config.apo";
@@ -70,6 +69,24 @@ impl SaveLoadWindowState {
         }
     }
 
+    /// Parses the last saved/loaded config (if any) for restoring the EQ at startup.
+    pub fn load_last(&self) -> Option<Config> {
+        let valid_ext = self.path.extension().and_then(|e| e.to_str()) == Some("apo");
+        if !valid_ext || !self.path.exists() {
+            return None;
+        }
+        match block_on(Config::parse_file(&self.path)) {
+            Ok(apo) => {
+                tracing::info!(path = %self.path.display(), "restored last EQ config");
+                Some(apo)
+            }
+            Err(err) => {
+                tracing::warn!(path = %self.path.display(), error = %err, "failed to restore last EQ config");
+                None
+            }
+        }
+    }
+
     pub fn loaded_conf(&mut self) -> Option<Config> {
         self.conf_to_load.take()
     }
@@ -118,6 +135,9 @@ impl SaveLoadWindowState {
                         self.result = block_on(eq_clone.save_config(self.path.clone(), format.unwrap()));
                         if self.result.is_ok() {
                             // Not a big deal if this fails, just convience to load last saved file next time
+                            if let Some(dir) = self.last_saved_path.parent() {
+                                let _ = std::fs::create_dir_all(dir);
+                            }
                             let _ = std::fs::write(&self.last_saved_path, self.path.to_str().unwrap());
                             self.show_window = false;
                         }

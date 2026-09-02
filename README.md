@@ -23,6 +23,24 @@ cargo install --git https://github.com/andyyu2004/pipewire-equalizer
 cargo install --path pw-eq
 ```
 
+### GUI (pw-eq-imgui)
+
+`pw-eq-imgui` is a Dear ImGui frontend with the same EQ engine.
+
+```bash
+cargo install --path pw-eq-imgui
+# Optional: menu entry, window icon and "Start in system tray" action
+install -Dm644 pw-eq-imgui/pw-eq-imgui.desktop ~/.local/share/applications/pw-eq-imgui.desktop
+# Optional: start hidden in the tray at login
+install -Dm644 pw-eq-imgui/pw-eq-imgui.desktop ~/.config/autostart/pw-eq-imgui.desktop
+sed -i 's/^Exec=pw-eq-imgui$/Exec=pw-eq-imgui --hidden/' ~/.config/autostart/pw-eq-imgui.desktop
+```
+
+- Closing the window or pressing `Esc` hides it to the tray; `File > Quit` (`Ctrl+Q`) or the tray
+  menu quits.
+- `pw-eq-imgui --hidden` starts with only the tray icon. The last saved/loaded `.apo` config is
+  restored on startup, so the EQ is active without opening the window.
+
 
 ## Usage
 
